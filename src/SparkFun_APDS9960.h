@@ -18,6 +18,7 @@
 
 /* Debug */
 #define DEBUG                   0
+#define DEBUG2                  0
 
 /* APDS-9960 I2C address */
 #define APDS9960_I2C_ADDR       0x39
@@ -26,6 +27,7 @@
 #define GESTURE_THRESHOLD_OUT   10
 #define GESTURE_SENSITIVITY_1   50
 #define GESTURE_SENSITIVITY_2   20
+#define GESTURE_TIMEOUT         700    // Duration in ms after the gesture is considered DIR_NONE
 
 /* Error code for returned values */
 #define ERROR                   0xFF
@@ -172,7 +174,7 @@
 #define DEFAULT_CONFIG3         0       // Enable all photodiodes, no SAI
 #define DEFAULT_GPENTH          40      // Threshold for entering gesture mode
 #define DEFAULT_GEXTH           30      // Threshold for exiting gesture mode
-#define DEFAULT_GCONF1          0x40    // 4 gesture events for int., 1 for exit
+#define DEFAULT_GCONF1          0x80    // 8 gesture events for int., 1 for exit
 #define DEFAULT_GGAIN           GGAIN_4X
 //#define DEFAULT_GGAIN           GGAIN_2X
 //#define DEFAULT_GLDRIVE         LED_DRIVE_100MA
@@ -192,7 +194,9 @@ enum {
   DIR_DOWN,
   DIR_NEAR,
   DIR_FAR,
-  DIR_ALL
+  DIR_ALL,
+  DIR_AGAIN,
+  DIR_TIMEOUT
 };
 
 /* State definitions */
@@ -287,7 +291,6 @@ public:
 
     /* Gesture methods */
     bool isGestureAvailable();
-    //Jon int readGesture();
     int16_t readGesture();
 
 private:
@@ -330,24 +333,12 @@ private:
     /* Raw I2C Commands */
     bool wireWriteByte(uint8_t val);
     bool wireWriteDataByte(uint8_t reg, uint8_t val);
-    // Jon bool wireWriteDataBlock(uint8_t reg, uint8_t *val, unsigned int len);
     bool wireWriteDataBlock(uint8_t reg, uint8_t *val, uint16_t len);
     bool wireReadDataByte(uint8_t reg, uint8_t &val);
-    // Jon int wireReadDataBlock(uint8_t reg, uint8_t *val, unsigned int len);
     int16_t wireReadDataBlock(uint8_t reg, uint8_t *val, uint16_t len);
 
     /* Members */
     gesture_data_type gesture_data_;
-    /* Jon
-    int gesture_ud_delta_;
-    int gesture_lr_delta_;
-    int gesture_ud_count_;
-    int gesture_lr_count_;
-    int gesture_near_count_;
-    int gesture_far_count_;
-    int gesture_state_;
-    int gesture_motion_;
-    */
     int16_t gesture_ud_delta_;
     int16_t gesture_lr_delta_;
     int16_t gesture_ud_count_;
@@ -356,6 +347,10 @@ private:
     int16_t gesture_far_count_;
     int16_t gesture_state_;
     int16_t gesture_motion_;
+
+    uint8_t readGestureState;
+    uint32_t readGestureStartTime;
+    uint32_t readGestureTime;
 };
 
 #endif

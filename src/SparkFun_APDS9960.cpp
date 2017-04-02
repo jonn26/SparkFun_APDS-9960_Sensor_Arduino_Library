@@ -37,6 +37,8 @@ SparkFun_APDS9960::SparkFun_APDS9960()
 
     gesture_state_ = 0;
     gesture_motion_ = DIR_NONE;
+
+    readGestureState = 0;
 }
 
 /**
@@ -443,6 +445,11 @@ bool SparkFun_APDS9960::isGestureAvailable()
 {
     uint8_t val;
 
+    if (readGestureState != 0) {
+        // continue processing in readGesture
+        return true;
+    }
+
     /* Read value from GSTATUS register */
     if( !wireReadDataByte(APDS9960_GSTATUS, val) ) {
         return ERROR;
@@ -464,117 +471,138 @@ bool SparkFun_APDS9960::isGestureAvailable()
  *
  * @return Number corresponding to gesture. -1 on error.
  */
-//Jon int SparkFun_APDS9960::readGesture()
  int16_t SparkFun_APDS9960::readGesture()
 {
     uint8_t fifo_level = 0;
     uint8_t bytes_read = 0;
     uint8_t fifo_data[128];
     uint8_t gstatus;
-    //Jon int motion;
-    //Jon int i;
-    uint16_t motion;
+    uint16_t motion = DIR_AGAIN;
     uint16_t i;
 
     /* Make sure that power and gesture is on and data is valid */
     if( !isGestureAvailable() || !(getMode() & 0b01000001) ) {
+        readGestureState = 0;
         return DIR_NONE;
     }
-
-    /* Keep looping as long as gesture data is valid */
-    while(1) {
-
-        /* Wait some time to collect next batch of FIFO data */
-        delay(FIFO_PAUSE_TIME);
-
-        /* Get the contents of the STATUS register. Is data still valid? */
-        if( !wireReadDataByte(APDS9960_GSTATUS, gstatus) ) {
-            return ERROR;
-        }
-
-        /* If we have valid data, read in FIFO */
-        if( (gstatus & APDS9960_GVALID) == APDS9960_GVALID ) {
-
-            /* Read the current FIFO level */
-            if( !wireReadDataByte(APDS9960_GFLVL, fifo_level) ) {
+    
+    const uint32_t now = millis();
+    switch(readGestureState) {
+        case 0:
+            readGestureStartTime = now;
+        case 1:
+            readGestureTime = now + FIFO_PAUSE_TIME;
+            readGestureState = 2;
+            break;
+        case 2:
+            if (readGestureTime < now) {
+                break;
+            }
+            if (now - readGestureStartTime > GESTURE_TIMEOUT) {
+                // just override DIR_AGAIN with DIR_TIMEOUT - keep reading the fifo
+                motion = DIR_TIMEOUT;
+            }
+            readGestureState = 3;
+        case 3:
+            /* Get the contents of the STATUS register. Is data still valid? */
+            if( !wireReadDataByte(APDS9960_GSTATUS, gstatus) ) {
+                readGestureState = 0;
                 return ERROR;
             }
 
-#if DEBUG
-            Serial.print("FIFO Level: ");
-            Serial.println(fifo_level);
-#endif
+            /* If we have valid data, read in FIFO */
+            if( (gstatus & APDS9960_GVALID) == APDS9960_GVALID ) {
 
-            /* If there's stuff in the FIFO, read it into our data block */
-            if( fifo_level > 0) {
-                bytes_read = wireReadDataBlock(  APDS9960_GFIFO_U,
-                                                (uint8_t*)fifo_data,
-                                                (fifo_level * 4) );
-                if( bytes_read == -1 ) {
+                /* Read the current FIFO level */
+                if( !wireReadDataByte(APDS9960_GFLVL, fifo_level) ) {
+                    readGestureState = 0;
                     return ERROR;
                 }
+
 #if DEBUG
-                Serial.print("FIFO Dump: ");
-                for ( i = 0; i < bytes_read; i++ ) {
-                    Serial.print(fifo_data[i]);
-                    Serial.print(" ");
-                }
-                Serial.println();
+                Serial.print("FIFO Level: ");
+                Serial.println(fifo_level);
 #endif
 
-                /* If at least 1 set of data, sort the data into U/D/L/R */
-                if( bytes_read >= 4 ) {
-                    for( i = 0; i < bytes_read; i += 4 ) {
-                        gesture_data_.u_data[gesture_data_.index] = \
-                                                            fifo_data[i + 0];
-                        gesture_data_.d_data[gesture_data_.index] = \
-                                                            fifo_data[i + 1];
-                        gesture_data_.l_data[gesture_data_.index] = \
-                                                            fifo_data[i + 2];
-                        gesture_data_.r_data[gesture_data_.index] = \
-                                                            fifo_data[i + 3];
-                        gesture_data_.index++;
-                        gesture_data_.total_gestures++;
+                /* If there's stuff in the FIFO, read it into our data block */
+                if( fifo_level > 0) {
+                    bytes_read = wireReadDataBlock(  APDS9960_GFIFO_U,
+                                                    (uint8_t*)fifo_data,
+                                                    (fifo_level * 4) );
+                    if( bytes_read == -1 ) {
+                        readGestureState = 0;
+                        return ERROR;
                     }
-
 #if DEBUG
-                Serial.print("Up Data: ");
-                for ( i = 0; i < gesture_data_.total_gestures; i++ ) {
-                    Serial.print(gesture_data_.u_data[i]);
-                    Serial.print(" ");
-                }
-                Serial.println();
+                    Serial.print("FIFO Dump: ");
+                    for ( i = 0; i < bytes_read; i++ ) {
+                        Serial.print(fifo_data[i]);
+                        Serial.print(" ");
+                    }
+                    Serial.println();
 #endif
 
-                    /* Filter and process gesture data. Decode near/far state */
-                    if( processGestureData() ) {
-                        if( decodeGesture() ) {
-                            //***TODO: U-Turn Gestures
-#if DEBUG
-                            //Serial.println(gesture_motion_);
-#endif
+                    /* If at least 1 set of data, sort the data into U/D/L/R */
+                    if( bytes_read >= 4 && gesture_data_.total_gestures < 32) {
+                        for( i = 0; i < bytes_read; i += 4 ) {
+                            gesture_data_.u_data[gesture_data_.index] = \
+                                                                fifo_data[i + 0];
+                            gesture_data_.d_data[gesture_data_.index] = \
+                                                                fifo_data[i + 1];
+                            gesture_data_.l_data[gesture_data_.index] = \
+                                                                fifo_data[i + 2];
+                            gesture_data_.r_data[gesture_data_.index] = \
+                                                                fifo_data[i + 3];
+                            gesture_data_.index++;
+                            gesture_data_.total_gestures++;
                         }
-                    }
 
-                    /* Reset data */
-                    gesture_data_.index = 0;
-                    gesture_data_.total_gestures = 0;
-                }
-            }
-        } else {
-
-            /* Determine best guessed gesture and clean up */
-            delay(FIFO_PAUSE_TIME);
-            decodeGesture();
-            motion = gesture_motion_;
 #if DEBUG
-            Serial.print("END: ");
-            Serial.println(gesture_motion_);
+                    Serial.print("Up Data: ");
+                    for ( i = 0; i < gesture_data_.total_gestures; i++ ) {
+                        Serial.print(gesture_data_.u_data[i]);
+                        Serial.print(" ");
+                    }
+                    Serial.println();
 #endif
-            resetGestureParameters();
-            return motion;
-        }
+
+                        /* Filter and process gesture data. Decode near/far state */
+                        if( processGestureData() ) {
+//                             if( decodeGesture() ) {
+//                                 //***TODO: U-Turn Gestures
+// #if DEBUG
+//                                 //Serial.println(gesture_motion_);
+// #endif
+//                             }
+                        }
+
+//                         /* Reset data */
+//                         gesture_data_.index = 0;
+//                         gesture_data_.total_gestures = 0;
+                    }
+                }
+                readGestureState = 1;
+            } else {
+                uint32_t gestureDuration = now - readGestureStartTime;
+#if DEBUG
+                Serial.printf("duration: %d\n", gestureDuration);
+#endif
+                if (gestureDuration < GESTURE_TIMEOUT) {
+                    decodeGesture();
+                    motion = gesture_motion_;
+                } else {
+                    motion = DIR_TIMEOUT;
+                }
+#if DEBUG
+                Serial.print("END: ");
+                Serial.println(gesture_motion_);
+#endif
+                resetGestureParameters();
+                return motion;
+            }
+            break;
     }
+    return motion;
 }
 
 /**
@@ -758,6 +786,8 @@ void SparkFun_APDS9960::resetGestureParameters()
 
     gesture_state_ = 0;
     gesture_motion_ = DIR_NONE;
+
+    readGestureState = 0;
 }
 
 /**

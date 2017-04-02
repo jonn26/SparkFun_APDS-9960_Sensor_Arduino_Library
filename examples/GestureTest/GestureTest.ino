@@ -60,6 +60,7 @@ Modified for ESP8266 by Jon Ulmer Nov 2016
 // Global Variables
 SparkFun_APDS9960 apds = SparkFun_APDS9960();
 volatile bool isr_flag = 0;
+bool again_flag = false;
 
 void setup() {
 
@@ -95,7 +96,7 @@ void setup() {
 }
 
 void loop() {
-  if( isr_flag == 1 ) {
+  if( isr_flag == 1 || again_flag ) {
     detachInterrupt(APDS9960_INT);
     handleGesture();
     isr_flag = 0;
@@ -127,6 +128,12 @@ void handleGesture() {
         break;
       case DIR_FAR:
         Serial.println("FAR");
+        break;
+      case DIR_TIMEOUT:
+        Serial.println("TIMEOUT");
+        break;
+      case DIR_AGAIN:
+        again_flag = true;
         break;
       default:
         Serial.println("NONE");
